@@ -77,3 +77,11 @@ def test_clone_agent_template_from_marketplace(mock_session, mock_fetch_marketpl
     assert agent_template.organisation_id == 1
     assert agent_template.name == 'test'
     assert agent_template.description == 'desc'
+
+def test_eval_agent_config_does_not_execute_code():
+    import pytest
+    for key in ['goal', 'constraints', 'instruction', 'tools']:
+        with pytest.raises(ValueError):
+            AgentTemplate.eval_agent_config(key, "__import__('os').getpid()")
+    assert AgentTemplate.eval_agent_config('goal', "['goal1', 'goal2']") == ["goal1", "goal2"]
+    assert AgentTemplate.eval_agent_config('tools', '[1, 2]') == ["1", "2"]
