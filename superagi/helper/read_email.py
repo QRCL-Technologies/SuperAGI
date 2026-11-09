@@ -4,6 +4,8 @@ from email.header import decode_header
 
 from bs4 import BeautifulSoup
 
+EMAIL_ATTACHMENTS_DIR = os.path.join("workspace", "email_attachments")
+
 
 class ReadEmail:
     def clean_email_body(self, email_body):
@@ -75,12 +77,35 @@ class ReadEmail:
             subject (str): The subject of the email.
 
         Returns:
-            None
+            str: The path of the saved attachment, or None if it was skipped.
         """
-        filename = part.get_filename()
-        if filename:
-            folder_name = self.clean(subject)
-            if not os.path.isdir(folder_name):
-                os.mkdir(folder_name)
-                filepath = os.path.join(folder_name, filename)
-                open(filepath, "wb").write(part.get_payload(decode=True))
+        filename = self.sanitize_filename(part.get_filename())
+        if not filename:
+            return None
+        base_dir = os.path.realpath(EMAIL_ATTACHMENTS_DIR)
+        folder_name = self.clean(subject or "") or "no_subject"
+        folder_path = os.path.realpath(os.path.join(base_dir, folder_name))
+        filepath = os.path.realpath(os.path.join(folder_path, filename))
+        if os.path.commonpath([base_dir, folder_path]) != base_dir or os.path.dirname(filepath) != folder_path:
+            return None
+        os.makedirs(folder_path, exist_ok=True)
+        with open(filepath, "wb") as file:
+            file.write(part.get_payload(decode=True) or b"")
+        return filepath
+
+    def sanitize_filename(self, filename):
+        """
+        Function to reduce a sender supplied attachment filename to a safe base name.
+
+        Args:
+            filename (str): The raw attachment filename.
+
+        Returns:
+            str: The sanitized filename, or None if it is unsafe.
+        """
+        if not filename:
+            return None
+        filename = os.path.basename(filename.replace("\\", "/")).strip()
+        if not filename or filename.startswith(".") or "\x00" in filename:
+            return None
+        return filename

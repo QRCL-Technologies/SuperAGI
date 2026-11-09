@@ -15,6 +15,7 @@ gui/.next
 venv
 workspace/output
 workspace/input
+workspace/email_attachments
 celerybeat-schedule
 ../bfg-report*
 superagi/tools/marketplace_tools/
