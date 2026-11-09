@@ -1,4 +1,4 @@
-from fastapi import Depends, HTTPException, Header, Security, status
+from fastapi import Depends, HTTPException, Header, Request, Security, status
 from fastapi.security import APIKeyHeader
 from fastapi_jwt_auth import AuthJWT
 from fastapi_sqlalchemy import db
@@ -44,14 +44,14 @@ def get_user_organisation(Authorize: AuthJWT = Depends(check_auth)):
     return organisation
 
 
-def get_current_user(Authorize: AuthJWT = Depends(check_auth), request: Request = Depends()):
+def get_current_user(Authorize: AuthJWT = Depends(check_auth), request: Request = None):
     env = get_config("ENV", "DEV")
 
     if env == "DEV":
         email = "super6@agi.com"
     else:
         # Check for HTTP basic auth headers
-        auth_header = request.headers.get('Authorization')
+        auth_header = request.headers.get('Authorization') if request is not None else None
         if auth_header and auth_header.startswith('Basic '):
             import base64
             auth_decoded = base64.b64decode(auth_header.split(' ')[1]).decode('utf-8')

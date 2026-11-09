@@ -12,7 +12,7 @@ from fastapi_jwt_auth import AuthJWT
 from fastapi_sqlalchemy import db
 
 from superagi.config.config import get_config
-from superagi.helper.auth import check_auth
+from superagi.helper.auth import check_auth, get_user_organisation
 from superagi.helper.resource_helper import ResourceHelper
 from superagi.lib.logger import logger
 from superagi.models.agent import Agent
@@ -21,6 +21,8 @@ from superagi.worker import summarize_resource
 from superagi.types.storage_types import StorageType
 
 router = APIRouter()
+
+ACCEPTED_FILE_TYPES = (".pdf", ".docx", ".pptx", ".csv", ".txt", ".epub")
 
 s3 = boto3.client(
     's3',
@@ -31,7 +33,7 @@ s3 = boto3.client(
 
 @router.post("/add/{agent_id}", status_code=201)
 async def upload(agent_id: int, file: UploadFile = File(...), name=Form(...), size=Form(...), type=Form(...),
-                 Authorize: AuthJWT = Depends(check_auth)):
+                 Authorize: AuthJWT = Depends(check_auth), organisation=Depends(get_user_organisation)):
     """
     Upload a file as a resource for an agent.
 
@@ -52,23 +54,19 @@ async def upload(agent_id: int, file: UploadFile = File(...), name=Form(...), si
 
     """
 
-    agent = db.session.query(Agent).filter(Agent.id == agent_id).first()
-    if agent is None:
-        raise HTTPException(status_code=400, detail="Agent does not exists")
+    agent = get_agent_for_organisation(agent_id, organisation)
 
-    # accepted_file_types is a tuple because endswith() expects a tuple
-    accepted_file_types = (".pdf", ".docx", ".pptx", ".csv", ".txt", ".epub")
-    if not name.endswith(accepted_file_types):
+    if not name.endswith(ACCEPTED_FILE_TYPES):
         raise HTTPException(status_code=400, detail="File type not supported!")
+    file_name = sanitize_file_name(file.filename)
 
     storage_type = StorageType.get_storage_type(get_config("STORAGE_TYPE", StorageType.FILE.value))
     save_directory = ResourceHelper.get_root_input_dir()
     if "{agent_id}" in save_directory:
-        save_directory = ResourceHelper.get_formatted_agent_level_path(agent=Agent
-                                                                       .get_agent_from_id(session=db.session,
-                                                                                    agent_id=agent_id),
-                                                                       path=save_directory)
-    file_path = os.path.join(save_directory, file.filename)
+        save_directory = ResourceHelper.get_formatted_agent_level_path(agent=agent, path=save_directory)
+    file_path = os.path.join(save_directory, file_name)
+    if not is_path_within_directory(file_path, save_directory):
+        raise HTTPException(status_code=400, detail="Invalid file name")
     if storage_type == StorageType.FILE:
         os.makedirs(save_directory, exist_ok=True)
         with open(file_path, "wb") as f:
@@ -99,7 +97,8 @@ async def upload(agent_id: int, file: UploadFile = File(...), name=Form(...), si
 
 @router.get("/get/all/{agent_id}", status_code=200)
 def get_all_resources(agent_id: int,
-                      Authorize: AuthJWT = Depends(check_auth)):
+                      Authorize: AuthJWT = Depends(check_auth),
+                      organisation=Depends(get_user_organisation)):
     """
     Get all resources for an agent.
 
@@ -111,13 +110,15 @@ def get_all_resources(agent_id: int,
 
     """
 
-    resources = db.session.query(Resource).filter(Resource.agent_id == agent_id).all()
+    agent = get_agent_for_organisation(agent_id, organisation)
+    resources = db.session.query(Resource).filter(Resource.agent_id == agent.id).all()
     return resources
 
 
 @router.get("/get/{resource_id}", status_code=200)
 def download_file_by_id(resource_id: int,
-                        Authorize: AuthJWT = Depends(check_auth)):
+                        Authorize: AuthJWT = Depends(check_auth),
+                        organisation=Depends(get_user_organisation)):
     """
     Download a particular resource by resource_id.
 
@@ -134,22 +135,11 @@ def download_file_by_id(resource_id: int,
         HTTPException (status_code=404): If the file is not found.
 
     """
-    # Get current user's organization_id from JWT token
-    current_user_org_id = Authorize.get_jwt_subject()
-
-    # First check if resource exists
     resource = db.session.query(Resource).filter(Resource.id == resource_id).first()
     if not resource:
         raise HTTPException(status_code=400, detail="Resource Not found!")
 
-    # Get the agent that owns this resource
-    agent = db.session.query(Agent).filter(Agent.id == resource.agent_id).first()
-    if not agent:
-        raise HTTPException(status_code=400, detail="Associated agent not found!")
-
-    # Verify the authenticated user belongs to the same organization as the agent
-    if str(agent.organisation_id) != str(current_user_org_id):
-        raise HTTPException(status_code=403, detail="You don't have permission to access this resource")
+    get_agent_for_organisation(resource.agent_id, organisation)
 
     download_file_path = resource.path
     file_name = resource.name
@@ -172,3 +162,35 @@ def download_file_by_id(resource_id: int,
             "Content-Disposition": f"attachment; filename={file_name}"
         }
     )
+
+
+def get_agent_for_organisation(agent_id: int, organisation):
+    """Return the agent if it belongs to the caller's organisation, otherwise raise 404."""
+    agent = db.session.query(Agent).filter(Agent.id == agent_id).first()
+    if agent is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    agent_organisation = agent.get_agent_organisation(db.session)
+    if organisation is None or agent_organisation is None or agent_organisation.id != organisation.id:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    return agent
+
+
+def sanitize_file_name(file_name: str) -> str:
+    """Strip any directory components from a client supplied file name and validate its extension."""
+    if not file_name or "\x00" in file_name:
+        raise HTTPException(status_code=400, detail="Invalid file name")
+    file_name = os.path.basename(file_name.replace("\\", "/")).strip()
+    if file_name in ("", ".", ".."):
+        raise HTTPException(status_code=400, detail="Invalid file name")
+    if not file_name.lower().endswith(ACCEPTED_FILE_TYPES):
+        raise HTTPException(status_code=400, detail="File type not supported!")
+    return file_name
+
+
+def is_path_within_directory(path: str, directory: str) -> bool:
+    directory = os.path.realpath(directory)
+    path = os.path.realpath(path)
+    try:
+        return os.path.commonpath([path, directory]) == directory
+    except ValueError:
+        return False
