@@ -6,12 +6,14 @@ from fastapi import HTTPException, Depends, Body
 from fastapi_jwt_auth import AuthJWT
 from pydantic import BaseModel
 
+from superagi.models.agent import Agent
 from superagi.models.agent_execution import AgentExecution
 from superagi.models.agent_execution_permission import AgentExecutionPermission
+from superagi.models.project import Project
 from superagi.worker import execute_agent
 from fastapi import APIRouter
 
-from superagi.helper.auth import check_auth
+from superagi.helper.auth import check_auth, get_user_organisation
 # from superagi.types.db import AgentExecutionPermissionOut, AgentExecutionPermissionIn
 
 router = APIRouter()
@@ -44,9 +46,31 @@ class AgentExecutionPermissionIn(BaseModel):
         orm_mode = True
 
 
+def _execution_belongs_to_organisation(agent_execution_id: int, agent_id: int, organisation) -> bool:
+    if organisation is None or agent_execution_id is None:
+        return False
+    agent_execution = db.session.query(AgentExecution).filter(AgentExecution.id == agent_execution_id).first()
+    if agent_execution is None or agent_execution.agent_id != agent_id:
+        return False
+    agent = db.session.query(Agent).filter(Agent.id == agent_execution.agent_id).first()
+    if agent is None:
+        return False
+    project = db.session.query(Project).filter(Project.id == agent.project_id).first()
+    return project is not None and project.organisation_id == organisation.id
+
+
+def _get_permission_for_organisation(agent_execution_permission_id: int, organisation) -> AgentExecutionPermission:
+    permission = db.session.query(AgentExecutionPermission).get(agent_execution_permission_id)
+    if permission is None or not _execution_belongs_to_organisation(permission.agent_execution_id,
+                                                                     permission.agent_id, organisation):
+        raise HTTPException(status_code=404, detail="Agent execution permission not found")
+    return permission
+
+
 @router.get("/get/{agent_execution_permission_id}")
 def get_agent_execution_permission(agent_execution_permission_id: int,
-                                   Authorize: AuthJWT = Depends(check_auth)):
+                                   Authorize: AuthJWT = Depends(check_auth),
+                                   organisation=Depends(get_user_organisation)):
     """
     Get an agent execution permission by its ID.
 
@@ -61,16 +85,14 @@ def get_agent_execution_permission(agent_execution_permission_id: int,
         AgentExecutionPermission: The requested agent execution permission.
     """
 
-    db_agent_execution_permission = db.session.query(AgentExecutionPermission).get(agent_execution_permission_id)
-    if not db_agent_execution_permission:
-        raise HTTPException(status_code=404, detail="Agent execution permission not found")
-    return db_agent_execution_permission
+    return _get_permission_for_organisation(agent_execution_permission_id, organisation)
 
 
 @router.post("/add", response_model=AgentExecutionPermissionOut)
 def create_agent_execution_permission(
         agent_execution_permission: AgentExecutionPermissionIn
-        , Authorize: AuthJWT = Depends(check_auth)):
+        , Authorize: AuthJWT = Depends(check_auth),
+        organisation=Depends(get_user_organisation)):
     """
     Create a new agent execution permission.
 
@@ -81,6 +103,9 @@ def create_agent_execution_permission(
     Returns:
         new_agent_execution_permission: A newly created agent execution permission instance.
     """
+    if not _execution_belongs_to_organisation(agent_execution_permission.agent_execution_id,
+                                              agent_execution_permission.agent_id, organisation):
+        raise HTTPException(status_code=404, detail="Agent execution not found")
     new_agent_execution_permission = AgentExecutionPermission(**agent_execution_permission.dict())
     db.session.add(new_agent_execution_permission)
     db.session.commit()
@@ -91,7 +116,8 @@ def create_agent_execution_permission(
               response_model=AgentExecutionPermissionIn)
 def update_agent_execution_permission(agent_execution_permission_id: int,
                                       agent_execution_permission: AgentExecutionPermissionIn,
-                                      Authorize: AuthJWT = Depends(check_auth)):
+                                      Authorize: AuthJWT = Depends(check_auth),
+                                      organisation=Depends(get_user_organisation)):
     """
     Update an AgentExecutionPermission in the database.
 
@@ -110,9 +136,10 @@ def update_agent_execution_permission(agent_execution_permission_id: int,
     Raises:
         HTTPException: If the AgentExecutionPermission is not found in the database.
     """
-    db_agent_execution_permission = db.session.query(AgentExecutionPermission).get(agent_execution_permission_id)
-    if not db_agent_execution_permission:
-        raise HTTPException(status_code=404, detail="Agent execution permission not found")
+    db_agent_execution_permission = _get_permission_for_organisation(agent_execution_permission_id, organisation)
+    if not _execution_belongs_to_organisation(agent_execution_permission.agent_execution_id,
+                                              agent_execution_permission.agent_id, organisation):
+        raise HTTPException(status_code=404, detail="Agent execution not found")
 
     for key, value in agent_execution_permission.dict().items():
         setattr(db_agent_execution_permission, key, value)
@@ -125,7 +152,8 @@ def update_agent_execution_permission(agent_execution_permission_id: int,
 def update_agent_execution_permission_status(agent_execution_permission_id: int,
                                              status: Annotated[bool, Body(embed=True)],
                                              user_feedback: Annotated[str, Body(embed=True)] = "",
-                                             Authorize: AuthJWT = Depends(check_auth)):
+                                             Authorize: AuthJWT = Depends(check_auth),
+                                             organisation=Depends(get_user_organisation)):
     """
     Update the execution permission status of an agent in the database.
 
@@ -143,10 +171,7 @@ def update_agent_execution_permission_status(agent_execution_permission_id: int,
     - A dictionary containing a "success" key with the value True to indicate a successful update.
     """
 
-    agent_execution_permission = db.session.query(AgentExecutionPermission).get(agent_execution_permission_id)
-    print(agent_execution_permission)
-    if agent_execution_permission is None:
-        raise HTTPException(status_code=400, detail="Invalid Request")
+    agent_execution_permission = _get_permission_for_organisation(agent_execution_permission_id, organisation)
     if status is None:
         raise HTTPException(status_code=400, detail="Invalid Request status is required")
     agent_execution_permission.status = "APPROVED" if status else "REJECTED"
