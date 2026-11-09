@@ -15,7 +15,7 @@ permissions:
 jobs:
   lint:
 
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     steps:
     - name: Checkout repository
@@ -31,7 +31,7 @@ jobs:
         python-version: "3.9"
 
     - name: Cache Python dependencies
-      uses: actions/cache@v2
+      uses: actions/cache@v4
       with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
@@ -61,7 +61,7 @@ jobs:
       # comments (to avoid publishing multiple comments in the same PR)
       contents: write
 
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 30
     strategy:
       matrix:
@@ -87,7 +87,7 @@ jobs:
           python-version: "3.9"
 
       - name: Cache dependencies
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
             path: ~/.cache/pip
             key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
