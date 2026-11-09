@@ -106,9 +106,17 @@ class Knowledges(DBBaseModel):
         return knowledge
     
     @classmethod
-    def delete_knowledge(cls, session, knowledge_id):
-        session.query(Knowledges).filter(Knowledges.id == knowledge_id).delete()
+    def get_organisation_knowledge_from_id(cls, session, knowledge_id, organisation_id):
+        knowledge = session.query(Knowledges).filter(Knowledges.id == knowledge_id,
+                                                     Knowledges.organisation_id == organisation_id).first()
+        return knowledge
+
+    @classmethod
+    def delete_knowledge(cls, session, knowledge_id, organisation_id):
+        deleted_count = session.query(Knowledges).filter(Knowledges.id == knowledge_id,
+                                                         Knowledges.organisation_id == organisation_id).delete()
         session.commit()
+        return deleted_count
 
     @classmethod
     def delete_knowledge_from_vector_index(cls, session, vector_db_index_id):
