@@ -19,7 +19,8 @@ from superagi.models.agent import Agent
 from superagi.models.models import Models
 from fastapi import APIRouter
 from sqlalchemy import desc
-from superagi.helper.auth import check_auth
+from superagi.helper.auth import check_auth, get_user_organisation
+from superagi.models.project import Project
 from superagi.controllers.types.agent_schedule import AgentScheduleInput
 from superagi.apm.event_handler import EventHandler
 from superagi.controllers.tool import ToolOut
@@ -27,6 +28,32 @@ from superagi.models.agent_config import AgentConfiguration
 from superagi.models.knowledges import Knowledges
 
 router = APIRouter()
+
+
+def get_organisation_agent(agent_id, organisation, include_deleted: bool = False):
+    """Return the agent only if it belongs to the caller's organisation, otherwise raise 404."""
+    if organisation is None or agent_id is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    query = db.session.query(Agent).join(Project, Agent.project_id == Project.id).filter(
+        Agent.id == agent_id, Project.organisation_id == organisation.id)
+    if not include_deleted:
+        query = query.filter(Agent.is_deleted == False)
+    agent = query.first()
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    return agent
+
+
+def get_organisation_agent_execution(agent_execution_id, organisation):
+    """Return the agent execution only if its agent belongs to the caller's organisation, otherwise raise 404."""
+    if organisation is None:
+        raise HTTPException(status_code=404, detail="Agent execution not found")
+    agent_execution = db.session.query(AgentExecution).join(Agent, AgentExecution.agent_id == Agent.id).join(
+        Project, Agent.project_id == Project.id).filter(AgentExecution.id == agent_execution_id,
+                                                        Project.organisation_id == organisation.id).first()
+    if not agent_execution:
+        raise HTTPException(status_code=404, detail="Agent execution not found")
+    return agent_execution
 
 
 class AgentExecutionOut(BaseModel):
@@ -64,7 +91,8 @@ class AgentExecutionIn(BaseModel):
 # CRUD Operations
 @router.post("/add", response_model=AgentExecutionOut, status_code=201)
 def create_agent_execution(agent_execution: AgentExecutionIn,
-                           Authorize: AuthJWT = Depends(check_auth)):
+                           Authorize: AuthJWT = Depends(check_auth),
+                           organisation=Depends(get_user_organisation)):
     """
     Create a new agent execution/run.
 
@@ -78,9 +106,7 @@ def create_agent_execution(agent_execution: AgentExecutionIn,
         HTTPException (Status Code=404): If the agent is not found.
     """
 
-    agent = db.session.query(Agent).filter(Agent.id == agent_execution.agent_id, Agent.is_deleted == False).first()
-    if not agent:
-        raise HTTPException(status_code=404, detail="Agent not found")
+    agent = get_organisation_agent(agent_execution.agent_id, organisation)
 
     start_step = AgentWorkflow.fetch_trigger_step_id(db.session, agent.agent_workflow_id)
 
@@ -150,7 +176,8 @@ def create_agent_execution(agent_execution: AgentExecutionIn,
     return db_agent_execution
 
 @router.post("/add_run", status_code = 201)
-def create_agent_run(agent_execution: AgentRunIn, Authorize: AuthJWT = Depends(check_auth)):
+def create_agent_run(agent_execution: AgentRunIn, Authorize: AuthJWT = Depends(check_auth),
+                     organisation=Depends(get_user_organisation)):
 
     """
     Create a new agent run with all the information(goals, instructions, model, etc).
@@ -165,9 +192,7 @@ def create_agent_run(agent_execution: AgentRunIn, Authorize: AuthJWT = Depends(c
         HTTPException (Status Code=404): If the agent is not found.
     """
 
-    agent = db.session.query(Agent).filter(Agent.id == agent_execution.agent_id, Agent.is_deleted == False).first()
-    if not agent:
-        raise HTTPException(status_code = 404, detail = "Agent not found")
+    agent = get_organisation_agent(agent_execution.agent_id, organisation)
     
     #Update the agent configurations table with the data of the latest agent execution
     AgentConfiguration.update_agent_configurations_table(session=db.session, agent_id=agent_execution.agent_id, updated_details=agent_execution)
@@ -233,7 +258,8 @@ def create_agent_run(agent_execution: AgentRunIn, Authorize: AuthJWT = Depends(c
 
 @router.post("/schedule", status_code=201)
 def schedule_existing_agent(agent_schedule: AgentScheduleInput,
-                            Authorize: AuthJWT = Depends(check_auth)):
+                            Authorize: AuthJWT = Depends(check_auth),
+                            organisation=Depends(get_user_organisation)):
 
     """
     Schedules an already existing agent.
@@ -253,6 +279,8 @@ def schedule_existing_agent(agent_schedule: AgentScheduleInput,
     Raises:
         HTTPException (Status Code=500): If the agent fails to get scheduled.
     """
+
+    get_organisation_agent(agent_schedule.agent_id, organisation)
 
     # Check if the agent is already scheduled
     scheduled_agent = db.session.query(AgentSchedule).filter(AgentSchedule.agent_id == agent_schedule.agent_id,
@@ -295,7 +323,8 @@ def schedule_existing_agent(agent_schedule: AgentScheduleInput,
 
 @router.get("/get/{agent_execution_id}", response_model=AgentExecutionOut)
 def get_agent_execution(agent_execution_id: int,
-                        Authorize: AuthJWT = Depends(check_auth)):
+                        Authorize: AuthJWT = Depends(check_auth),
+                        organisation=Depends(get_user_organisation)):
     """
     Get an agent execution by agent_execution_id.
 
@@ -309,34 +338,23 @@ def get_agent_execution(agent_execution_id: int,
         HTTPException (Status Code=404): If the agent execution is not found.
     """
 
-    if (
-        db_agent_execution := db.session.query(AgentExecution)
-        .filter(AgentExecution.id == agent_execution_id)
-        .first()
-    ):
-        return db_agent_execution
-    else:
-        raise HTTPException(status_code=404, detail="Agent execution not found")
+    return get_organisation_agent_execution(agent_execution_id, organisation)
 
 
 @router.put("/update/{agent_execution_id}", response_model=AgentExecutionOut)
 def update_agent_execution(agent_execution_id: int,
                            agent_execution: AgentExecutionIn,
-                           Authorize: AuthJWT = Depends(check_auth)):
+                           Authorize: AuthJWT = Depends(check_auth),
+                           organisation=Depends(get_user_organisation)):
     """Update details of particular agent_execution by agent_execution_id"""
 
-    db_agent_execution = db.session.query(AgentExecution).filter(AgentExecution.id == agent_execution_id).first()
+    db_agent_execution = get_organisation_agent_execution(agent_execution_id, organisation)
     if agent_execution.status == "COMPLETED":
         raise HTTPException(status_code=400, detail="Invalid Request")
 
-    if not db_agent_execution:
-        raise HTTPException(status_code=404, detail="Agent Execution not found")
-
     if agent_execution.agent_id:
-        if agent := db.session.query(Agent).get(agent_execution.agent_id):
-            db_agent_execution.agent_id = agent.id
-        else:
-            raise HTTPException(status_code=404, detail="Agent not found")
+        agent = get_organisation_agent(agent_execution.agent_id, organisation, include_deleted=True)
+        db_agent_execution.agent_id = agent.id
     if agent_execution.status not in [
         "CREATED",
         "RUNNING",
@@ -358,19 +376,26 @@ def update_agent_execution(agent_execution_id: int,
 
 @router.get("/get/agents/status/{status}")
 def agent_list_by_status(status: str,
-                         Authorize: AuthJWT = Depends(check_auth)):
+                         Authorize: AuthJWT = Depends(check_auth),
+                         organisation=Depends(get_user_organisation)):
     """Get list of all agent_ids for a given status"""
 
-    running_agent_ids = db.session.query(AgentExecution.agent_id).filter(
-        AgentExecution.status == status.upper()).distinct().all()
+    if organisation is None:
+        raise HTTPException(status_code=404, detail="Organisation not found")
+    running_agent_ids = db.session.query(AgentExecution.agent_id).join(
+        Agent, AgentExecution.agent_id == Agent.id).join(Project, Agent.project_id == Project.id).filter(
+        AgentExecution.status == status.upper(), Project.organisation_id == organisation.id).distinct().all()
     agent_ids = [agent_id for (agent_id) in running_agent_ids]
     return agent_ids
 
 
 @router.get("/get/agent/{agent_id}")
 def list_running_agents(agent_id: str,
-                        Authorize: AuthJWT = Depends(check_auth)):
+                        Authorize: AuthJWT = Depends(check_auth),
+                        organisation=Depends(get_user_organisation)):
     """Get all running state agents"""
+
+    get_organisation_agent(agent_id, organisation, include_deleted=True)
 
     executions = db.session.query(AgentExecution).filter(AgentExecution.agent_id == agent_id).order_by(
         desc(AgentExecution.status == 'RUNNING'), desc(AgentExecution.last_execution_time)).all()
@@ -381,8 +406,13 @@ def list_running_agents(agent_id: str,
 
 @router.get("/get/latest/agent/project/{project_id}")
 def get_agent_by_latest_execution(project_id: int,
-                                  Authorize: AuthJWT = Depends(check_auth)):
+                                  Authorize: AuthJWT = Depends(check_auth),
+                                  organisation=Depends(get_user_organisation)):
     """Get latest executing agent details"""
+
+    project = Project.find_by_id(db.session, project_id)
+    if organisation is None or project is None or project.organisation_id != organisation.id:
+        raise HTTPException(status_code=404, detail="Project not found")
 
     latest_execution = (
         db.session.query(AgentExecution)
@@ -391,6 +421,8 @@ def get_agent_by_latest_execution(project_id: int,
         .order_by(desc(AgentExecution.last_execution_time))
         .first()
     )
+    if latest_execution is None:
+        raise HTTPException(status_code=404, detail="Agent execution not found")
     isRunning = False
     if latest_execution.status == "RUNNING":
         isRunning = True
