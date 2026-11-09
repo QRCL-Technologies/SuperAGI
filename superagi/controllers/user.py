@@ -30,9 +30,11 @@ class UserBase(BaseModel):
         orm_mode = True
 
 
-class UserOut(UserBase):
+class UserOut(BaseModel):
     id: int
-    organisation_id: int
+    name: str
+    email: str
+    organisation_id: Optional[int]
     created_at: datetime
     updated_at: datetime
 
@@ -45,6 +47,15 @@ class UserIn(UserBase):
 
     class Config:
         orm_mode = True
+
+
+def _get_authorized_user(user_id: int, Authorize: AuthJWT):
+    current_user = get_current_user(Authorize)
+    if current_user is None:
+        raise HTTPException(status_code=401, detail="Unauthenticated")
+    if current_user.id != user_id:
+        raise HTTPException(status_code=403, detail="Not authorized to access this user")
+    return current_user
 
 
 # CRUD Operations
@@ -63,7 +74,7 @@ def create_user(user: UserIn, Authorize: AuthJWT = Depends(check_auth)):
         HTTPException (status_code=400): If there is an issue creating the user.
         HTTPException (status_code=422): If required fields are missing or incorrectly formatted.
     """
-    logger.info("Received user data: %s", user)
+    logger.info("Received user data: name=%s, email=%s", user.name, user.email)
     
     # Validate incoming request data
     if not user.name or not user.email or not user.password:
@@ -72,9 +83,12 @@ def create_user(user: UserIn, Authorize: AuthJWT = Depends(check_auth)):
     
     db_user = db.session.query(User).filter(User.email == user.email).first()
     if db_user:
-        return db_user
+        current_user = get_current_user(Authorize)
+        if current_user is not None and current_user.id == db_user.id:
+            return db_user
+        raise HTTPException(status_code=409, detail="User already exists")
     
-    db_user = User(name=user.name, email=user.email, password=user.password, organisation_id=user.organisation_id)
+    db_user = User(name=user.name, email=user.email, password=user.password)
     db.session.add(db_user)
     db.session.commit()
     db.session.flush()
@@ -102,15 +116,11 @@ def get_user(user_id: int,
         User: The user details.
 
     Raises:
-        HTTPException (status_code=404): If the user with the specified ID is not found.
+        HTTPException (status_code=403): If the user is not the authenticated user.
 
     """
 
-    # Authorize.jwt_required()
-    db_user = db.session.query(User).filter(User.id == user_id).first()
-    if not db_user:
-        raise HTTPException(status_code=404, detail="User not found")
-    return db_user
+    return _get_authorized_user(user_id, Authorize)
 
 
 @router.put("/update/{user_id}", response_model=UserOut)
@@ -128,13 +138,17 @@ def update_user(user_id: int,
         User: The updated user details.
 
     Raises:
-        HTTPException (status_code=404): If the user with the specified ID is not found.
+        HTTPException (status_code=403): If the user is not the authenticated user.
+        HTTPException (status_code=409): If the email is already used by another user.
 
     """
 
-    db_user = db.session.query(User).filter(User.id == user_id).first()
-    if not db_user:
-        raise HTTPException(status_code=404, detail="User not found")
+    db_user = _get_authorized_user(user_id, Authorize)
+
+    if user.email != db_user.email:
+        existing_user = db.session.query(User).filter(User.email == user.email).first()
+        if existing_user is not None and existing_user.id != db_user.id:
+            raise HTTPException(status_code=409, detail="Email already in use")
 
     db_user.name = user.name
     db_user.email = user.email
@@ -153,5 +167,5 @@ def update_first_login_source(source: str, Authorize: AuthJWT = Depends(check_au
         user.first_login_source = source
     db.session.commit()
     db.session.flush()
-    logger.info("User : ",user)
+    logger.info("User : %s", user.id)
     return user
