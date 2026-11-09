@@ -3,15 +3,24 @@ import base64
 from cryptography.fernet import Fernet, InvalidToken, InvalidSignature
 from superagi.config.config import get_config
 from superagi.lib.logger import logger
-# Generate a key
-# key = Fernet.generate_key()
+# Publicly known values shipped in config_template.yaml; never accept them.
+INSECURE_DEFAULT_KEYS = {"abcdefghijklmnopqrstuvwxyz123456"}
+
+KEY_GENERATION_HINT = ("Generate one with: "
+                       "python -c \"import secrets; print(secrets.token_urlsafe(24))\"")
 
 key = get_config("ENCRYPTION_KEY")
-if key is None:
-    raise Exception("Encryption key not found in config file.")
+if not key:
+    raise Exception("Encryption key not found in config file. " + KEY_GENERATION_HINT)
+
+key = str(key)
+
+if key in INSECURE_DEFAULT_KEYS:
+    raise ValueError("ENCRYPTION_KEY is set to the public template value. "
+                     "Replace it with a unique random key. " + KEY_GENERATION_HINT)
 
 if len(key) != 32:
-    raise ValueError("Encryption key must be 32 bytes long.")
+    raise ValueError("Encryption key must be 32 bytes long. " + KEY_GENERATION_HINT)
 
 # Encode the key to UTF-8
 key = key.encode(
