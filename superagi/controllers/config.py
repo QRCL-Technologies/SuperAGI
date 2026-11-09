@@ -10,9 +10,8 @@ from superagi.models.organisation import Organisation
 from fastapi_sqlalchemy import db
 from fastapi import HTTPException, Depends, Request
 from superagi.config.config import get_config
-from superagi.helper.auth import check_auth
-from fastapi_jwt_auth import AuthJWT
-from superagi.helper.encyption_helper import encrypt_data,decrypt_data
+from superagi.helper.auth import get_user_organisation
+from superagi.helper.encyption_helper import encrypt_data
 from superagi.lib.logger import logger
 # from superagi.types.db import ConfigurationIn, ConfigurationOut
 
@@ -39,22 +38,45 @@ class ConfigurationIn(BaseModel):
     class Config:
         orm_mode = True
 
+
+MASKED_SECRET = "********"
+
+
+def _validate_organisation_access(organisation_id: int, organisation: Organisation):
+    if organisation is None or organisation.id != organisation_id:
+        raise HTTPException(status_code=403, detail="Unauthorized")
+
+
+def _mask_secret(value):
+    return MASKED_SECRET if value else value
+
+
+def _config_to_out(config: Configuration) -> ConfigurationOut:
+    config_out = ConfigurationOut.from_orm(config)
+    if config_out.key == "model_api_key":
+        config_out.value = _mask_secret(config_out.value)
+    return config_out
+
+
 # CRUD Operations
 @router.post("/add/organisation/{organisation_id}", status_code=201,
              response_model=ConfigurationOut)
 def create_config(config: ConfigurationIn, organisation_id: int,
-                  Authorize: AuthJWT = Depends(check_auth)):
+                  organisation=Depends(get_user_organisation)):
     """
     Creates a new Organisation level config.
 
     Args:
         config (Configuration): Configuration details.
         organisation_id (int): ID of the organisation.
+        organisation (Organisation): Organisation of the authenticated user.
 
     Returns:
         Configuration: Created configuration.
 
     """
+
+    _validate_organisation_access(organisation_id, organisation)
 
     db_organisation = db.session.query(Organisation).filter(Organisation.id == organisation_id).first()
     if not db_organisation:
@@ -75,7 +97,7 @@ def create_config(config: ConfigurationIn, organisation_id: int,
         existing_config.value = config.value
         db.session.commit()
         db.session.flush()
-        return existing_config
+        return _config_to_out(existing_config)
 
     logger.info("NEW CONFIG")
     new_config = Configuration(organisation_id=organisation_id, key=config.key, value=config.value)
@@ -84,24 +106,26 @@ def create_config(config: ConfigurationIn, organisation_id: int,
     db.session.add(new_config)
     db.session.commit()
     db.session.flush()
-    return new_config
+    return _config_to_out(new_config)
 
 
 @router.get("/get/organisation/{organisation_id}/key/{key}", status_code=200)
 def get_config_by_organisation_id_and_key(organisation_id: int, key: str,
-                                          Authorize: AuthJWT = Depends(check_auth)):
+                                          organisation=Depends(get_user_organisation)):
     """
     Get a configuration by organisation ID and key.
 
     Args:
         organisation_id (int): ID of the organisation.
         key (str): Key of the configuration.
-        Authorize (AuthJWT, optional): Authorization JWT token. Defaults to Depends(check_auth).
+        organisation (Organisation): Organisation of the authenticated user.
 
     Returns:
         Configuration: Retrieved configuration.
 
     """
+
+    _validate_organisation_access(organisation_id, organisation)
 
     db_organisation = db.session.query(Organisation).filter(Organisation.id == organisation_id).first()
     if not db_organisation:
@@ -117,25 +141,34 @@ def get_config_by_organisation_id_and_key(organisation_id: int, key: str,
             db.session.add(new_config)
             db.session.commit()
             db.session.flush()
-            return new_config
-    return config
+            return _config_to_out(new_config)
+    if config is None:
+        return None
+    return {
+        "id": config.id,
+        "provider": config.provider,
+        "org_id": config.org_id,
+        "api_key": _mask_secret(config.api_key),
+    }
 
 
 
 @router.get("/get/organisation/{organisation_id}", status_code=201)
 def get_config_by_organisation_id(organisation_id: int,
-                                  Authorize: AuthJWT = Depends(check_auth)):
+                                  organisation=Depends(get_user_organisation)):
     """
     Get all configurations for a given organisation ID.
 
     Args:
         organisation_id (int): ID of the organisation.
-        Authorize (AuthJWT, optional): Authorization JWT token. Defaults to Depends(check_auth).
+        organisation (Organisation): Organisation of the authenticated user.
 
     Returns:
         List[Configuration]: List of configurations for the organisation.
 
     """
+
+    _validate_organisation_access(organisation_id, organisation)
 
     db_organisation = db.session.query(Organisation).filter(Organisation.id == organisation_id).first()
     if not db_organisation:
@@ -143,13 +176,7 @@ def get_config_by_organisation_id(organisation_id: int,
 
     configs = db.session.query(Configuration).filter(Configuration.organisation_id == organisation_id).all()
 
-    # Decrypt the API key if the key is "model_api_key"
-    for config in configs:
-        if config.key == "model_api_key":
-            decrypted_value = decrypt_data(config.value)
-            config.value = decrypted_value
-
-    return configs
+    return [_config_to_out(config) for config in configs]
 
 
 @router.get("/get/env", status_code=200)
