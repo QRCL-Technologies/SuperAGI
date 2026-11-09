@@ -13,6 +13,22 @@ from superagi.models.knowledges import Knowledges
 
 router = APIRouter()
 
+SENSITIVE_CONFIG_KEYS = {"api_key"}
+
+
+def get_organisation_vector_db(vector_db_id: int, organisation):
+    vector_db = Vectordbs.get_vector_db_from_id(db.session, vector_db_id)
+    if vector_db is None or organisation is None or vector_db.organisation_id != organisation.id:
+        raise HTTPException(status_code=404, detail="VectorDb not found")
+    return vector_db
+
+
+def mask_secret(value):
+    if not value:
+        return value
+    value = str(value)
+    return "*" * 8 + value[-4:] if len(value) > 8 else "*" * 8
+
 @router.get("/get/list")
 def get_vector_db_list():
     marketplace_vector_dbs = Vectordbs.fetch_marketplace_list()
@@ -33,14 +49,16 @@ def get_user_connected_vector_db_list(organisation = Depends(get_user_organisati
     return vector_db_list
 
 @router.get("/db/details/{vector_db_id}")
-def get_vector_db_details(vector_db_id: int):
-    vector_db = Vectordbs.get_vector_db_from_id(db.session, vector_db_id)
+def get_vector_db_details(vector_db_id: int, organisation = Depends(get_user_organisation)):
+    vector_db = get_organisation_vector_db(vector_db_id, organisation)
     vector_db_data = {
         "id": vector_db.id,
         "name": vector_db.name,
         "db_type": vector_db.db_type
     }
     vector_db_config = VectordbConfigs.get_vector_db_config_from_db_id(db.session, vector_db_id)
+    for key in SENSITIVE_CONFIG_KEYS & vector_db_config.keys():
+        vector_db_config[key] = mask_secret(vector_db_config[key])
     vector_db_with_config = vector_db_data | vector_db_config
     indices = db.session.query(VectordbIndices).filter(VectordbIndices.vector_db_id == vector_db_id).all()
     vector_indices = []
@@ -50,7 +68,8 @@ def get_vector_db_details(vector_db_id: int):
     return vector_db_with_config
 
 @router.post("/delete/{vector_db_id}")
-def delete_vector_db(vector_db_id: int):
+def delete_vector_db(vector_db_id: int, organisation = Depends(get_user_organisation)):
+    get_organisation_vector_db(vector_db_id, organisation)
     try:
         vector_indices = VectordbIndices.get_vector_indices_from_vectordb(db.session, vector_db_id)
         for vector_index in vector_indices:
@@ -122,8 +141,8 @@ def connect_weaviate_vector_db(data: dict, organisation = Depends(get_user_organ
     return {"id": weaviate_db.id, "name": weaviate_db.name}
 
 @router.put("/update/vector_db/{vector_db_id}")
-def update_vector_db(new_indices: list, vector_db_id: int):
-    vector_db = Vectordbs.get_vector_db_from_id(db.session, vector_db_id)
+def update_vector_db(new_indices: list, vector_db_id: int, organisation = Depends(get_user_organisation)):
+    vector_db = get_organisation_vector_db(vector_db_id, organisation)
     existing_indices = VectordbIndices.get_vector_indices_from_vectordb(db.session, vector_db_id)
     existing_index_names = []
     for index in existing_indices:
