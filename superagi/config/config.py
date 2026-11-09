@@ -49,3 +49,20 @@ _config_instance = Config(ROOT_DIR + "/" + CONFIG_FILE)
 
 def get_config(key: str, default: str = None) -> str:
     return _config_instance.get_config(key, default)
+
+
+JWT_SECRET_KEY_MIN_LENGTH = 32
+INSECURE_JWT_SECRET_KEYS = {"secret", "YOUR_JWT_SECRET_KEY"}
+
+
+def validate_jwt_secret_key(secret_key, env) -> None:
+    """Refuse to run in PROD with a missing, short or template JWT signing key."""
+    if env != "PROD":
+        return
+    if not secret_key or not isinstance(secret_key, str):
+        raise RuntimeError("JWT_SECRET_KEY must be set when ENV is PROD.")
+    if secret_key.strip() in INSECURE_JWT_SECRET_KEYS:
+        raise RuntimeError("JWT_SECRET_KEY is set to the template default. "
+                           "Generate a random key, e.g. `python -c \"import secrets; print(secrets.token_urlsafe(48))\"`.")
+    if len(secret_key) < JWT_SECRET_KEY_MIN_LENGTH:
+        raise RuntimeError(f"JWT_SECRET_KEY must be at least {JWT_SECRET_KEY_MIN_LENGTH} characters when ENV is PROD.")
