@@ -46,7 +46,9 @@ AWS_ACCESS_KEY_ID:
 AWS_SECRET_ACCESS_KEY:
 
 #AUTH
-ENV: 'DEV' #DEV,PROD, to use GITHUB OAUTH set to PROD
+# DEV disables API authentication (every request acts as the default user). Keep the proxy bound to 127.0.0.1
+# when using DEV. Set to PROD (the default when ENV is unset) to require JWT auth, e.g. with GitHub OAuth.
+ENV: 'DEV' #DEV,PROD
 JWT_SECRET_KEY: 'secret'
 expiry_time_hours: 1
 
