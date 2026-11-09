@@ -4,12 +4,21 @@ import pytest
 from fastapi.testclient import TestClient
 
 from main import app
+from superagi.helper.auth import get_user_organisation
 from superagi.models.agent import Agent
 from superagi.models.agent_config import AgentConfiguration
 from superagi.models.agent_execution import AgentExecution
 from superagi.models.agent_execution_config import AgentExecutionConfiguration
+from superagi.models.organisation import Organisation
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def mock_user_organisation():
+    app.dependency_overrides[get_user_organisation] = lambda: Organisation(id=1)
+    yield
+    app.dependency_overrides.pop(get_user_organisation, None)
 
 @pytest.fixture
 def mocks():
@@ -50,3 +59,12 @@ def test_get_agent_execution_configuration_success(mocks):
             assert response.status_code == 200
 
 
+def test_get_agent_execution_configuration_other_organisation_failure(mocks):
+    with patch('superagi.controllers.agent_execution_config.db') as mock_db:
+        mock_agent, _, _, _ = mocks
+        mock_db.session.query.return_value.filter.return_value.first.side_effect = [mock_agent, None]
+
+        response = client.get("/agent_executions_configs/details/agent_id/1/agent_execution_id/-1")
+
+        assert response.status_code == 404
+        assert response.json() == {"detail": "Agent not found"}

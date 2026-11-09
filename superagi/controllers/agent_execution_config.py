@@ -9,11 +9,12 @@ from typing import Optional, Union
 from sqlalchemy import func, or_
 from sqlalchemy import desc
 
-from superagi.helper.auth import check_auth
+from superagi.helper.auth import check_auth, get_user_organisation
 from superagi.models.agent import Agent
 from superagi.models.agent_config import AgentConfiguration
 from superagi.models.agent_execution import AgentExecution
 from superagi.models.agent_execution_config import AgentExecutionConfiguration
+from superagi.models.project import Project
 from superagi.models.tool import Tool
 from superagi.models.knowledges import Knowledges
 
@@ -23,7 +24,7 @@ router = APIRouter()
 @router.get("/details/agent_id/{agent_id}/agent_execution_id/{agent_execution_id}")
 def get_agent_execution_configuration(agent_id : Union[int, None, str],
                                       agent_execution_id: Union[int, None, str],
-                                      Authorize: AuthJWT = Depends(check_auth)):
+                                      organisation=Depends(get_user_organisation)):
    
     """
     Get the agent configuration using the agent ID and the agent execution ID.
@@ -31,7 +32,7 @@ def get_agent_execution_configuration(agent_id : Union[int, None, str],
     Args:
         agent_id (int): Identifier of the agent.
         agent_execution_id (int): Identifier of the agent execution.
-        Authorize (AuthJWT, optional): Authorization dependency. Defaults to Depends(check_auth).
+        organisation: Organisation of the authenticated user.
 
     Returns:
         dict: Agent configuration including its details.
@@ -50,6 +51,11 @@ def get_agent_execution_configuration(agent_id : Union[int, None, str],
     # Define the agent_config keys to fetch
     agent = db.session.query(Agent).filter(agent_id == Agent.id,or_(Agent.is_deleted == False)).first()
     if not agent:
+        raise HTTPException(status_code = 404, detail = "Agent not found")
+
+    project = db.session.query(Project).filter(Project.id == agent.project_id,
+                                               Project.organisation_id == organisation.id).first()
+    if not project:
         raise HTTPException(status_code = 404, detail = "Agent not found")
     
     #If the agent_execution_id received is -1 then the agent_execution_id is set as the most recent execution
