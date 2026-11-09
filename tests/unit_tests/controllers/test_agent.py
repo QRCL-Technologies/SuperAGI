@@ -4,6 +4,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from main import app
+from superagi.helper.auth import get_user_organisation
+from superagi.models.organisation import Organisation
 from superagi.models.agent_schedule import AgentSchedule
 from superagi.models.agent_config import AgentConfiguration
 from superagi.models.agent import Agent
@@ -11,6 +13,13 @@ from datetime import datetime, timedelta
 from pytz import timezone
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def mock_user_organisation():
+    app.dependency_overrides[get_user_organisation] = lambda: Organisation(id=1)
+    yield
+    app.dependency_overrides.pop(get_user_organisation, None)
 
 @pytest.fixture
 def mock_patch_schedule_input():
@@ -222,7 +231,7 @@ def test_create_and_schedule_agent_success(mock_agent_config_schedule, mock_agen
 def test_create_and_schedule_agent_project_not_found(mock_agent_config_schedule):
     with patch('superagi.controllers.agent.db') as mock_db:
         # Set up the database query result
-        mock_db.session.query.return_value.get.return_value = None
+        mock_db.session.query.return_value.filter.return_value.first.return_value = None
 
         # Call the endpoint
         response = client.post("agents/schedule", json=mock_agent_config_schedule)
@@ -230,3 +239,53 @@ def test_create_and_schedule_agent_project_not_found(mock_agent_config_schedule)
         # Verify the HTTP response
         assert response.status_code == 404
         assert response.json() == {"detail": "Project not found"}
+
+
+def test_create_agent_other_organisation_project(mock_agent_config_schedule):
+    with patch('superagi.controllers.agent.db') as mock_db:
+        mock_db.session.query.return_value.filter.return_value.first.return_value = None
+
+        response = client.post("agents/create", json=mock_agent_config_schedule["agent_config"])
+
+        assert response.status_code == 404
+        assert response.json() == {"detail": "Project not found"}
+        mock_db.session.add.assert_not_called()
+
+
+def test_get_agents_by_other_organisation_project():
+    with patch('superagi.controllers.agent.db') as mock_db:
+        mock_db.session.query.return_value.filter.return_value.first.return_value = None
+
+        response = client.get("agents/get/project/2")
+
+        assert response.status_code == 404
+        assert response.json() == {"detail": "Project not found"}
+
+
+def test_delete_other_organisation_agent():
+    with patch('superagi.controllers.agent.db') as mock_db:
+        mock_db.session.query.return_value.join.return_value.filter.return_value.first.return_value = None
+
+        response = client.put("agents/delete/2")
+
+        assert response.status_code == 404
+        mock_db.session.commit.assert_not_called()
+
+
+@pytest.mark.parametrize("method,url,body", [
+    ("post", "agents/stop/schedule?agent_id=2", None),
+    ("put", "agents/edit/schedule", {"agent_id": 2, "start_time": "2023-02-02 01:00:00",
+                                     "recurrence_interval": None, "expiry_date": None, "expiry_runs": -1}),
+    ("get", "agents/get/schedule_data/2", None),
+])
+def test_schedule_endpoints_other_organisation_agent(method, url, body, mock_schedule):
+    with patch('superagi.controllers.agent.db') as mock_db:
+        mock_db.session.query.return_value.join.return_value.filter.return_value.first.return_value = None
+        mock_db.session.query.return_value.filter.return_value.first.return_value = mock_schedule
+
+        response = client.request(method, url, json=body)
+
+        assert response.status_code == 404
+        assert response.json() == {"detail": "Agent not found"}
+        assert mock_schedule.status == "SCHEDULED"
+        mock_db.session.commit.assert_not_called()

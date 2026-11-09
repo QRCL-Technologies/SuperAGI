@@ -29,11 +29,33 @@ from superagi.models.knowledges import Knowledges
 
 from sqlalchemy import func
 # from superagi.types.db import AgentOut, AgentIn
-from superagi.helper.auth import check_auth
+from superagi.helper.auth import check_auth, get_user_organisation
 from superagi.apm.event_handler import EventHandler
 from superagi.models.workflows.iteration_workflow import IterationWorkflow
 
 router = APIRouter()
+
+
+def get_organisation_project(project_id: int, organisation):
+    """Return the project if it belongs to the organisation, else raise 404."""
+    project = None
+    if organisation is not None:
+        project = db.session.query(Project).filter(Project.id == project_id,
+                                                   Project.organisation_id == organisation.id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return project
+
+
+def get_organisation_agent(agent_id: int, organisation):
+    """Return the agent if its project belongs to the organisation, else raise 404."""
+    agent = None
+    if organisation is not None:
+        agent = db.session.query(Agent).join(Project, Agent.project_id == Project.id).filter(
+            Agent.id == agent_id, Project.organisation_id == organisation.id).first()
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    return agent
 
 
 class AgentOut(BaseModel):
@@ -59,7 +81,8 @@ class AgentIn(BaseModel):
 
 @router.post("/create", status_code=201)
 def create_agent_with_config(agent_with_config: AgentConfigInput,
-                             Authorize: AuthJWT = Depends(check_auth)):
+                             Authorize: AuthJWT = Depends(check_auth),
+                             organisation=Depends(get_user_organisation)):
     """
     Create a new agent with configurations.
 
@@ -86,9 +109,7 @@ def create_agent_with_config(agent_with_config: AgentConfigInput,
         HTTPException (status_code=404): If the associated project or any of the tools is not found.
     """
 
-    project = db.session.query(Project).get(agent_with_config.project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+    get_organisation_project(agent_with_config.project_id, organisation)
 
     invalid_tools = Tool.get_invalid_tools(agent_with_config.tools, db.session)
     if len(invalid_tools) > 0:  # If the returned value is not True (then it is an invalid tool_id)
@@ -166,7 +187,8 @@ def create_agent_with_config(agent_with_config: AgentConfigInput,
 
 @router.post("/schedule", status_code=201)
 def create_and_schedule_agent(agent_config_schedule: AgentConfigSchedule,
-                              Authorize: AuthJWT = Depends(check_auth)):
+                              Authorize: AuthJWT = Depends(check_auth),
+                              organisation=Depends(get_user_organisation)):
     """
     Create a new agent with configurations and scheduling.
 
@@ -180,9 +202,7 @@ def create_and_schedule_agent(agent_config_schedule: AgentConfigSchedule,
         HTTPException (status_code=500): If the associated agent fails to get scheduled.
     """
 
-    project = db.session.query(Project).get(agent_config_schedule.agent_config.project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+    get_organisation_project(agent_config_schedule.agent_config.project_id, organisation)
     agent_config = agent_config_schedule.agent_config
     invalid_tools = Tool.get_invalid_tools(agent_config.tools, db.session)
     if len(invalid_tools) > 0:  # If the returned value is not True (then it is an invalid tool_id)
@@ -236,7 +256,8 @@ def create_and_schedule_agent(agent_config_schedule: AgentConfigSchedule,
 
 
 @router.post("/stop/schedule", status_code=200)
-def stop_schedule(agent_id: int, Authorize: AuthJWT = Depends(check_auth)):
+def stop_schedule(agent_id: int, Authorize: AuthJWT = Depends(check_auth),
+                  organisation=Depends(get_user_organisation)):
     """
     Stopping the scheduling for a given agent.
 
@@ -248,6 +269,7 @@ def stop_schedule(agent_id: int, Authorize: AuthJWT = Depends(check_auth)):
         HTTPException (status_code=404): If the agent schedule is not found.
     """
 
+    get_organisation_agent(agent_id, organisation)
     agent_to_delete = db.session.query(AgentSchedule).filter(AgentSchedule.agent_id == agent_id,
                                                              AgentSchedule.status == "SCHEDULED").first()
     if not agent_to_delete:
@@ -258,7 +280,8 @@ def stop_schedule(agent_id: int, Authorize: AuthJWT = Depends(check_auth)):
 
 @router.put("/edit/schedule", status_code=200)
 def edit_schedule(schedule: AgentScheduleInput,
-                  Authorize: AuthJWT = Depends(check_auth)):
+                  Authorize: AuthJWT = Depends(check_auth),
+                  organisation=Depends(get_user_organisation)):
     """
     Edit the scheduling for a given agent.
 
@@ -271,6 +294,7 @@ def edit_schedule(schedule: AgentScheduleInput,
         HTTPException (status_code=404): If the agent schedule is not found.
     """
 
+    get_organisation_agent(schedule.agent_id, organisation)
     agent_to_edit = db.session.query(AgentSchedule).filter(AgentSchedule.agent_id == schedule.agent_id, AgentSchedule.status == "SCHEDULED").first()
                         
     if not agent_to_edit:
@@ -287,7 +311,8 @@ def edit_schedule(schedule: AgentScheduleInput,
 
 
 @router.get("/get/schedule_data/{agent_id}")
-def get_schedule_data(agent_id: int, Authorize: AuthJWT = Depends(check_auth)):
+def get_schedule_data(agent_id: int, Authorize: AuthJWT = Depends(check_auth),
+                      organisation=Depends(get_user_organisation)):
     """
     Get the scheduling data for a given agent.
 
@@ -303,6 +328,7 @@ def get_schedule_data(agent_id: int, Authorize: AuthJWT = Depends(check_auth)):
         expiry_date (DateTime): The date and time when the agent is scheduled to stop runs.
         expiry_runs (Integer): The number of runs before the agent expires.
     """
+    get_organisation_agent(agent_id, organisation)
     agent = db.session.query(AgentSchedule).filter(AgentSchedule.agent_id == agent_id,
                                                    AgentSchedule.status == "SCHEDULED").first()
 
@@ -331,7 +357,8 @@ def get_schedule_data(agent_id: int, Authorize: AuthJWT = Depends(check_auth)):
 
 @router.get("/get/project/{project_id}")
 def get_agents_by_project_id(project_id: int,
-                             Authorize: AuthJWT = Depends(check_auth)):
+                             Authorize: AuthJWT = Depends(check_auth),
+                             organisation=Depends(get_user_organisation)):
     """
     Get all agents by project ID.
 
@@ -347,9 +374,7 @@ def get_agents_by_project_id(project_id: int,
     """
 
     # Checking for project
-    project = db.session.query(Project).get(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+    get_organisation_project(project_id, organisation)
 
     agents = db.session.query(Agent).filter(Agent.project_id == project_id, or_(or_(Agent.is_deleted == False, Agent.is_deleted is None), Agent.is_deleted is None)).all()
 
@@ -381,7 +406,8 @@ def get_agents_by_project_id(project_id: int,
 
 
 @router.put("/delete/{agent_id}", status_code=200)
-def delete_agent(agent_id: int, Authorize: AuthJWT = Depends(check_auth)):
+def delete_agent(agent_id: int, Authorize: AuthJWT = Depends(check_auth),
+                 organisation=Depends(get_user_organisation)):
     """
         Delete an existing Agent
             - Updates the is_deleted flag: Executes a soft delete
@@ -398,7 +424,7 @@ def delete_agent(agent_id: int, Authorize: AuthJWT = Depends(check_auth)):
             HTTPException (Status Code=404): If the Agent or associated Project is not found or deleted already.
     """
 
-    db_agent = db.session.query(Agent).filter(Agent.id == agent_id).first()
+    db_agent = get_organisation_agent(agent_id, organisation)
     db_agent_executions = db.session.query(AgentExecution).filter(AgentExecution.agent_id == agent_id).all()
     db_agent_schedule = db.session.query(AgentSchedule).filter(AgentSchedule.agent_id == agent_id, AgentSchedule.status == "SCHEDULED").first()
     
