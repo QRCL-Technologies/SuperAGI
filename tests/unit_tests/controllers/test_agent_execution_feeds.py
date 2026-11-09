@@ -1,43 +1,65 @@
-from unittest.mock import MagicMock, Mock, create_autospec, patch
+from unittest.mock import MagicMock, patch
+
 import pytest
-from fastapi.testclient import TestClient
 from fastapi import HTTPException
-from main import app
-from fastapi_sqlalchemy import db
-from superagi.controllers.agent_execution_feed import get_agent_execution_feed
+
+from superagi.controllers.agent_execution_feed import (
+    get_agent_execution_feed,
+    get_agent_execution_for_organisation,
+    get_agent_execution_feed_for_organisation,
+    get_execution_tasks,
+)
+
+
+def _scoped_query(mock_db):
+    return mock_db.session.query.return_value.join.return_value.join.return_value.filter.return_value
+
 
 @patch('superagi.controllers.agent_execution_feed.db')
-def test_get_agent_execution_feed(mock_query):
-    mock_session = create_autospec(pytest.Session)
-    
-    AgentExecution = MagicMock()
-    agent_execution = AgentExecution()
-    agent_execution.status = "PAUSED"
-    agent_execution.last_shown_error_id = None
-    
-    AgentExecutionFeed = MagicMock()
-    agent_execution_feed = AgentExecutionFeed()
-    agent_execution_feed.error_message = None
-    
-    feeds = [agent_execution_feed]
-    
-    check_auth = MagicMock()
-    AuthJWT = MagicMock()
-    check_auth.return_value = AuthJWT  
-    asc = MagicMock()
-    
-    AgentExecutionPermission = MagicMock()
-    agent_execution_permission = AgentExecutionPermission()
-    agent_execution_permission.id = 1
-    agent_execution_permission.created_at = "2021-12-13T00:00:00"
-    agent_execution_permission.response = "Yes"
-    agent_execution_permission.status = "Completed"
-    agent_execution_permission.tool_name = "Tool1"
-    agent_execution_permission.question = "Question1"
-    agent_execution_permission.user_feedback = "Feedback1"
-        
-    permissions = [agent_execution_permission]
-    mock_agent_execution = Mock() 
-    mock_query.return_value.filter.return_value.first.return_value = mock_agent_execution
-    mock_agent_execution_id = 1
-    assert get_agent_execution_feed(mock_agent_execution_id)
+def test_get_agent_execution_feed(mock_db):
+    organisation = MagicMock(id=1)
+    agent_execution = MagicMock(status="PAUSED", last_shown_error_id=None)
+    _scoped_query(mock_db).first.return_value = agent_execution
+    mock_db.session.query.return_value.filter_by.return_value.order_by.return_value.all.return_value = []
+
+    response = get_agent_execution_feed(1, organisation=organisation)
+
+    assert response["status"] == "PAUSED"
+    assert response["feeds"] == []
+
+
+@patch('superagi.controllers.agent_execution_feed.db')
+def test_get_agent_execution_feed_other_organisation(mock_db):
+    _scoped_query(mock_db).first.return_value = None
+
+    with pytest.raises(HTTPException) as exc:
+        get_agent_execution_feed(1, organisation=MagicMock(id=2))
+    assert exc.value.status_code == 404
+
+
+@patch('superagi.controllers.agent_execution_feed.TaskQueue')
+@patch('superagi.controllers.agent_execution_feed.db')
+def test_get_execution_tasks_other_organisation(mock_db, mock_task_queue):
+    _scoped_query(mock_db).first.return_value = None
+
+    with pytest.raises(HTTPException) as exc:
+        get_execution_tasks(1, organisation=MagicMock(id=2))
+    assert exc.value.status_code == 404
+    mock_task_queue.assert_not_called()
+
+
+@patch('superagi.controllers.agent_execution_feed.db')
+def test_get_agent_execution_for_organisation_without_organisation(mock_db):
+    with pytest.raises(HTTPException) as exc:
+        get_agent_execution_for_organisation(1, None)
+    assert exc.value.status_code == 404
+
+
+@patch('superagi.controllers.agent_execution_feed.db')
+def test_get_agent_execution_feed_for_organisation_other_organisation(mock_db):
+    mock_db.session.query.return_value.filter.return_value.first.return_value = MagicMock(agent_execution_id=5)
+    _scoped_query(mock_db).first.return_value = None
+
+    with pytest.raises(HTTPException) as exc:
+        get_agent_execution_feed_for_organisation(10, MagicMock(id=2))
+    assert exc.value.status_code == 404
