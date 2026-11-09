@@ -11,6 +11,14 @@ from typing import Optional
 from sqlalchemy import or_
 
 
+def is_dev_env() -> bool:
+    """
+    Unauthenticated DEV mode must be explicitly opted into with ENV: 'DEV'.
+    Any other or missing value requires JWT authentication.
+    """
+    return get_config("ENV", "PROD") == "DEV"
+
+
 def check_auth(Authorize: AuthJWT = Depends()):
     """
     Function to check if the user is authenticated or not based on the environment.
@@ -21,8 +29,7 @@ def check_auth(Authorize: AuthJWT = Depends()):
     Returns:
         AuthJWT: Instance of AuthJWT class if the user is authenticated.
     """
-    env = get_config("ENV", "DEV")
-    if env == "PROD":
+    if not is_dev_env():
         Authorize.jwt_required()
     return Authorize
 
@@ -44,23 +51,12 @@ def get_user_organisation(Authorize: AuthJWT = Depends(check_auth)):
     return organisation
 
 
-def get_current_user(Authorize: AuthJWT = Depends(check_auth), request: Request = Depends()):
-    env = get_config("ENV", "DEV")
-
-    if env == "DEV":
+def get_current_user(Authorize: AuthJWT = Depends(check_auth)):
+    if is_dev_env():
         email = "super6@agi.com"
     else:
-        # Check for HTTP basic auth headers
-        auth_header = request.headers.get('Authorization')
-        if auth_header and auth_header.startswith('Basic '):
-            import base64
-            auth_decoded = base64.b64decode(auth_header.split(' ')[1]).decode('utf-8')
-            username, password = auth_decoded.split(':')
-            # Assuming username is the email
-            email = username
-        else:
-            # Retrieve the email of the logged-in user from the JWT token payload
-            email = Authorize.get_jwt_subject()
+        # Retrieve the email of the logged-in user from the JWT token payload
+        email = Authorize.get_jwt_subject()
 
     # Query the User table to find the user by their email
     user = db.session.query(User).filter(User.email == email).first()

@@ -66,7 +66,10 @@ db_url = get_config('DB_URL', None)
 db_username = get_config('DB_USERNAME')
 db_password = get_config('DB_PASSWORD')
 db_name = get_config('DB_NAME')
-env = get_config('ENV', "DEV")
+env = get_config('ENV', "PROD")
+if env == "DEV":
+    logger.warning("ENV is set to DEV: API authentication is disabled and every request acts as the default user. "
+                   "Only run DEV mode on a host that is not reachable from untrusted networks.")
 
 if db_url is None:
     if db_username is None:

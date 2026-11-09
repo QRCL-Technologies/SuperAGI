@@ -162,7 +162,7 @@ def current_env():
 
     """
 
-    env = get_config("ENV", "DEV")
+    env = get_config("ENV", "PROD")
     return {
         "env": env
     }
