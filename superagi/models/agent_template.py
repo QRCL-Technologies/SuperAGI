@@ -1,3 +1,4 @@
+import ast
 import json
 
 import requests
@@ -201,6 +202,32 @@ class AgentTemplate(DBBaseModel):
             return agent_workflow.id
 
     @classmethod
+    def parse_list_config(cls, value):
+        """
+        Safely parses a stored list config value (JSON or Python literal) without executing code.
+
+        Args:
+            value (str | list): The stored config value.
+
+        Returns:
+            list: The parsed list of strings/integers.
+
+        Raises:
+            ValueError: If the value is not a list of strings or integers.
+        """
+        if isinstance(value, str):
+            try:
+                value = ast.literal_eval(value)
+            except (ValueError, SyntaxError, TypeError, MemoryError, RecursionError):
+                raise ValueError("Invalid agent config value")
+        if isinstance(value, tuple):
+            value = list(value)
+        if not isinstance(value, list) or not all(
+                isinstance(item, (str, int)) and not isinstance(item, bool) for item in value):
+            raise ValueError("Agent config value must be a list of strings or integers")
+        return value
+
+    @classmethod
     def eval_agent_config(cls, key, value):
         """
         Evaluates the value of an agent configuration key.
@@ -221,6 +248,6 @@ class AgentTemplate(DBBaseModel):
             else:
                 return None
         elif key == "goal" or key == "constraints" or key == "instruction":
-            return eval(value)
+            return cls.parse_list_config(value)
         elif key == "tools":
-            return [str(x) for x in eval(value)]
+            return [str(x) for x in cls.parse_list_config(value)]

@@ -126,3 +126,23 @@ def test_edit_agent_template_with_new_config_success(mock_get_user_org, mock_aut
 
     session_mock.commit.assert_called()
     session_mock.flush.assert_called()
+
+@patch('superagi.controllers.agent_template.db')
+@patch('superagi.helper.auth.db')
+@patch('superagi.helper.auth.get_user_organisation')
+def test_edit_agent_template_rejects_code_in_list_config(mock_get_user_org, mock_auth_db, mock_db):
+    mock_agent_template = AgentTemplate(id=1, name="Test Agent Template", description="Test Description")
+    mock_get_user_org.return_value = MagicMock(id=1)
+    mock_db.session = MagicMock()
+    mock_db.session.query.return_value.filter.return_value.first.return_value = mock_agent_template
+
+    response = client.put("agent_templates/update_agent_template/1", json={
+        "name": "Updated Agent Template",
+        "description": "Updated Description",
+        "agent_configs": {
+            "agent_workflow": "Don't Maintain Task Queue",
+            "goal": "__import__('os').getpid()"
+        }
+    })
+
+    assert response.status_code == 400

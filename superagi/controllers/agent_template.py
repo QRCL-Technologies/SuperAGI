@@ -23,6 +23,8 @@ import json
 
 router = APIRouter()
 
+AGENT_TEMPLATE_LIST_CONFIG_KEYS = ["goal", "constraints", "instruction", "tools"]
+
 
 class AgentTemplateOut(BaseModel):
     id: int
@@ -76,7 +78,10 @@ def get_agent_template(template_source, agent_template_id: int, organisation=Dep
             AgentTemplateConfig.agent_template_id == agent_template_id).all()
         agent_workflow = AgentWorkflow.find_by_id(db_agent_template.agent_workflow_id)
         for agent_template_config in agent_template_configs:
-            config_value = AgentTemplate.eval_agent_config(agent_template_config.key, agent_template_config.value)
+            try:
+                config_value = AgentTemplate.eval_agent_config(agent_template_config.key, agent_template_config.value)
+            except ValueError:
+                raise HTTPException(status_code=422, detail="Invalid agent template configuration")
             configs[agent_template_config.key] = {"value": config_value}
         template["configs"] = configs
         template["agent_workflow_name"] = agent_workflow.name
@@ -121,6 +126,11 @@ def edit_agent_template(agent_template_id: int,
     agent_config_values = updated_agent_configs.get('agent_configs', {})
 
     for key, value in agent_config_values.items():
+        if key in AGENT_TEMPLATE_LIST_CONFIG_KEYS:
+            try:
+                value = AgentTemplate.parse_list_config(value)
+            except ValueError:
+                raise HTTPException(status_code=400, detail=f"Invalid value for agent config '{key}'")
         if isinstance(value, (list, dict)):
             value = json.dumps(value)
         config = db.session.query(AgentTemplateConfig).filter(
@@ -248,7 +258,7 @@ def save_agent_as_template(agent_execution_id: str,
             if config.key not in AgentTemplate.main_keys():
                 continue
             if config.key == "tools":
-                config_value = str(Tool.convert_tool_ids_to_names(db, eval(config.value)))
+                config_value = str(Tool.convert_tool_ids_to_names(db, AgentTemplate.parse_list_config(config.value)))
             agent_template_config = AgentTemplateConfig(agent_template_id=agent_template.id, key=config.key,
                                                         value=config_value)
             db.session.add(agent_template_config)       
@@ -398,7 +408,10 @@ def fetch_agent_config_from_template(agent_template_id: int,
     main_keys = AgentTemplate.main_keys()
     for config in template_config:
         if config.key in main_keys:
-            template_config_dict[config.key] = AgentTemplate.eval_agent_config(config.key, config.value)
+            try:
+                template_config_dict[config.key] = AgentTemplate.eval_agent_config(config.key, config.value)
+            except ValueError:
+                raise HTTPException(status_code=422, detail="Invalid agent template configuration")
 
     if "instruction" not in template_config_dict:
         template_config_dict["instruction"] = []
@@ -463,7 +476,7 @@ def publish_template(agent_execution_id: str, organisation=Depends(get_user_orga
         if agent_execution_configuration.key not in main_keys:
             continue
         if agent_execution_configuration.key == "tools":
-            config_value = str(Tool.convert_tool_ids_to_names(db, eval(agent_execution_configuration.value)))
+            config_value = str(Tool.convert_tool_ids_to_names(db, AgentTemplate.parse_list_config(agent_execution_configuration.value)))
         agent_template_config = AgentTemplateConfig(agent_template_id=agent_template.id, key=agent_execution_configuration.key,
                                                     value=config_value)
         db.session.add(agent_template_config)
