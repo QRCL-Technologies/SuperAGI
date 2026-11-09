@@ -84,8 +84,10 @@ def get_marketplace_knowledge_details(knowledge_name: str):
     return knowledge_details
 
 @router.get("/user/get/details/{knowledge_id}")
-def get_user_knowledge_details(knowledge_id: int):
-    knowledge_data = Knowledges.get_knowledge_from_id(db.session, knowledge_id)
+def get_user_knowledge_details(knowledge_id: int, organisation = Depends(get_user_organisation)):
+    knowledge_data = Knowledges.get_organisation_knowledge_from_id(db.session, knowledge_id, organisation.id)
+    if knowledge_data is None:
+        raise HTTPException(status_code=404, detail="Knowledge not found")
     vector_database_index = VectordbIndices.get_vector_index_from_id(db.session, knowledge_data.vector_db_index_id)
     vector_database = Vectordbs.get_vector_db_from_id(db.session, vector_database_index.vector_db_id)
     knowledge = {
@@ -113,10 +115,12 @@ def add_update_user_knowledge(knowledge_data: dict, organisation = Depends(get_u
 
 
 @router.post("/delete/{knowledge_id}")
-def delete_user_knowledge(knowledge_id: int):
+def delete_user_knowledge(knowledge_id: int, organisation = Depends(get_user_organisation)):
     try:
-        Knowledges.delete_knowledge(db.session, knowledge_id)
-    except:
+        deleted_count = Knowledges.delete_knowledge(db.session, knowledge_id, organisation.id)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Knowledge not found")
+    if not deleted_count:
         raise HTTPException(status_code=404, detail="Knowledge not found")
 
 @router.get("/install/{knowledge_name}/index/{vector_db_index_id}")
@@ -164,4 +168,4 @@ def uninstall_selected_knowledge(knowledge_name: str, organisation = Depends(get
     except Exception as err:
         raise HTTPException(status_code=400, detail=err)
     KnowledgeConfigs.delete_knowledge_config(db.session, knowledge.id)
-    Knowledges.delete_knowledge(db.session, knowledge.id)
+    Knowledges.delete_knowledge(db.session, knowledge.id, organisation.id)
