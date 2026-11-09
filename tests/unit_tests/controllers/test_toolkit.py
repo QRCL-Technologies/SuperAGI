@@ -167,3 +167,25 @@ def test_install_toolkit_from_marketplace(mock_toolkit_details):
 
         # Verify the function calls
         mock_fetch_marketplace_detail.assert_called_once_with(search_str="details", toolkit_name="toolkit_1")
+
+
+def test_local_install_rejects_repo_not_in_allowlist():
+    with patch('superagi.helper.auth.db'), \
+            patch('superagi.helper.tool_helper.get_config', return_value=[]), \
+            patch('superagi.controllers.toolkit.add_tool_to_json') as mock_add_tool_to_json:
+        response = client.post("/toolkits/get/local/install",
+                               json={"github_link": "https://github.com/attacker/evil"})
+
+        assert response.status_code == 403
+        mock_add_tool_to_json.assert_not_called()
+
+
+def test_local_install_allows_allowlisted_repo():
+    with patch('superagi.helper.auth.db'), \
+            patch('superagi.helper.tool_helper.get_config', return_value=["owner/repo"]), \
+            patch('superagi.controllers.toolkit.add_tool_to_json') as mock_add_tool_to_json:
+        response = client.post("/toolkits/get/local/install",
+                               json={"github_link": "https://github.com/owner/repo"})
+
+        assert response.status_code == 200
+        mock_add_tool_to_json.assert_called_once_with("https://github.com/owner/repo")

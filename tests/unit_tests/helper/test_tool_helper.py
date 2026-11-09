@@ -186,3 +186,38 @@ def test_compare_toolkit():
         "configs": [{"key": "config_key_2"}]
     }
     assert compare_toolkit(toolkit1, toolkit2)
+
+
+@pytest.mark.parametrize("allowed, link, expected", [
+    (None, "https://github.com/owner/repo", False),
+    ([], "https://github.com/owner/repo", False),
+    (["owner/repo"], "https://github.com/owner/repo", True),
+    (["https://github.com/Owner/Repo"], "https://github.com/owner/repo", True),
+    ("owner/repo, other/tool", "https://github.com/other/tool", True),
+    (["owner/repo"], "https://github.com/attacker/repo", False),
+    (["owner/repo"], "not a link", False),
+])
+def test_is_toolkit_repo_allowed(allowed, link, expected):
+    from superagi.helper.tool_helper import is_toolkit_repo_allowed
+    with patch('superagi.helper.tool_helper.get_config', return_value=allowed):
+        assert is_toolkit_repo_allowed(link) is expected
+
+
+def test_add_tool_to_json_rejects_repo_not_in_allowlist(tmp_path, monkeypatch):
+    from superagi.helper.tool_helper import add_tool_to_json
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / 'tools.json').write_text('{"tools": {}}')
+    with patch('superagi.helper.tool_helper.get_config', return_value=[]):
+        with pytest.raises(PermissionError):
+            add_tool_to_json("https://github.com/attacker/evil")
+    assert (tmp_path / 'tools.json').read_text() == '{"tools": {}}'
+
+
+def test_add_tool_to_json_adds_allowlisted_repo(tmp_path, monkeypatch):
+    import json
+    from superagi.helper.tool_helper import add_tool_to_json
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / 'tools.json').write_text('{"tools": {}}')
+    with patch('superagi.helper.tool_helper.get_config', return_value=["owner/repo"]):
+        add_tool_to_json("https://github.com/owner/repo")
+    assert json.loads((tmp_path / 'tools.json').read_text()) == {"tools": {"repo": "https://github.com/owner/repo"}}

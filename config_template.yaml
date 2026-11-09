@@ -55,6 +55,11 @@ GITHUB_CLIENT_ID:
 GITHUB_CLIENT_SECRET:
 FRONTEND_URL: "http://localhost:3000"
 
+#TOOLKIT INSTALLATION
+# GitHub repos (owner/repo or https://github.com/owner/repo) that users may install via the UI.
+# Installed toolkits run code inside the server, so only list repos you have reviewed. Empty disables installs.
+ALLOWED_TOOLKIT_REPOS: []
+
 #ENCRYPTION KEY, Replace this with your own key for production
 ENCRYPTION_KEY: abcdefghijklmnopqrstuvwxyz123456
 
