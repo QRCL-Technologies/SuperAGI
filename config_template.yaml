@@ -47,7 +47,7 @@ AWS_SECRET_ACCESS_KEY:
 
 #AUTH
 ENV: 'DEV' #DEV,PROD, to use GITHUB OAUTH set to PROD
-JWT_SECRET_KEY: 'secret'
+JWT_SECRET_KEY: 'YOUR_JWT_SECRET_KEY' # Required for PROD: random value of at least 32 chars, e.g. python -c "import secrets; print(secrets.token_urlsafe(48))"
 expiry_time_hours: 1
 
 #GITHUB OAUTH:

@@ -13,7 +13,7 @@ from sqlalchemy.orm import sessionmaker
 import superagi
 from datetime import timedelta, datetime
 from superagi.agent.workflow_seed import IterationWorkflowSeed, AgentWorkflowSeed
-from superagi.config.config import get_config
+from superagi.config.config import get_config, validate_jwt_secret_key
 from superagi.controllers.agent import router as agent_router
 from superagi.controllers.agent_execution import router as agent_execution_router
 from superagi.controllers.agent_execution_feed import router as agent_execution_feed_router
@@ -138,8 +138,10 @@ app.include_router(web_hook_router,prefix="/webhook")
 
 # in production you can use Settings management
 # from pydantic to get secret key from .env
+validate_jwt_secret_key(get_config("JWT_SECRET_KEY"), get_config("ENV", "DEV"))
+
+
 class Settings(BaseModel):
-    # jwt_secret = get_config("JWT_SECRET_KEY")
     authjwt_secret_key: str = superagi.config.config.get_config("JWT_SECRET_KEY")
 
 

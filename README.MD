@@ -123,6 +123,7 @@ git clone https://github.com/TransformerOptimus/SuperAGI.git
 cd SuperAGI
 ```
 3. Create a copy of config_template.yaml, and name it config.yaml.
+   If you set `ENV: 'PROD'`, replace `JWT_SECRET_KEY` with a random value of at least 32 characters (e.g. `python -c "import secrets; print(secrets.token_urlsafe(48))"`); SuperAGI refuses to start in PROD with the template value.
 
 4. Ensure that Docker is installed on your system. You can download and install it from [here](https://docs.docker.com/get-docker/).
 
