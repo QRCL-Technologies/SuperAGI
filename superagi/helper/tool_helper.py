@@ -2,6 +2,7 @@ import importlib.util
 import inspect
 import json
 import os
+import re
 import sys
 import zipfile
 from urllib.parse import urlparse
@@ -278,7 +279,39 @@ def extract_repo_name(repo_link):
     return repo_name
 
 
+def normalize_github_repo_link(repo_link):
+    """Return the canonical lowercase "owner/repo" for a GitHub repo link, or None if invalid."""
+    if not isinstance(repo_link, str):
+        return None
+    match = re.match(r'^(?:https?://(?:www\.)?github\.com/)?([\w\-.]+)/([\w\-.]+?)(?:\.git)?/?$', repo_link.strip(),
+                     re.IGNORECASE)
+    if not match:
+        return None
+    owner, repo = match.group(1), match.group(2)
+    if owner in (".", "..") or repo in (".", ".."):
+        return None
+    return f"{owner}/{repo}".lower()
+
+
+def get_allowed_toolkit_repos():
+    """Operator-configured allowlist of GitHub repos that may be installed as toolkits."""
+    allowed = get_config("ALLOWED_TOOLKIT_REPOS", None)
+    if not allowed:
+        return set()
+    if isinstance(allowed, str):
+        allowed = allowed.split(",")
+    return {repo for repo in (normalize_github_repo_link(str(item)) for item in allowed) if repo}
+
+
+def is_toolkit_repo_allowed(repo_link):
+    repo = normalize_github_repo_link(repo_link)
+    return repo is not None and repo in get_allowed_toolkit_repos()
+
+
 def add_tool_to_json(repo_link):
+    if not is_toolkit_repo_allowed(repo_link):
+        raise PermissionError("Toolkit repository is not in ALLOWED_TOOLKIT_REPOS")
+
     # Read the content of the tools.json file
     with open('tools.json', 'r') as file:
         tools_data = json.load(file)

@@ -211,11 +211,17 @@ def download_and_install_tool(github_link_request: GitHubLinkRequest = Body(...)
 
     Raises:
         HTTPException (status_code=400): If the GitHub link is invalid.
+        HTTPException (status_code=403): If the repository is not in the operator-configured
+            ALLOWED_TOOLKIT_REPOS allowlist.
 
     """
     github_link = github_link_request.github_link
     if not GithubHelper.validate_github_link(github_link):
         raise HTTPException(status_code=400, detail="Invalid Github link")
+    if not is_toolkit_repo_allowed(github_link):
+        raise HTTPException(status_code=403,
+                            detail="Installing this toolkit is not permitted. "
+                                   "Ask your administrator to add it to ALLOWED_TOOLKIT_REPOS.")
     # download_folder = get_config("TOOLS_DIR")
     # download_tool(github_link, download_folder)
     # process_files(download_folder, db.session, organisation, code_link=github_link)
